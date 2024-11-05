@@ -111,3 +111,132 @@ SELECT database_name, backup_start_date, backup_finish_date, type,
 FROM msdb.dbo.backupset bs
 JOIN msdb.dbo.backupmediafamily bmf ON bs.media_set_id = bmf.media_set_id
 ORDER BY backup_start_date DESC;
+# 11. Server Configuration and Properties
+## List all server configuration settings
+sql
+EXEC sp_configure;
+## Check server properties
+sql
+SELECT SERVERPROPERTY('MachineName') AS MachineName,
+       SERVERPROPERTY('Edition') AS Edition,
+       SERVERPROPERTY('ProductLevel') AS ProductLevel,
+       SERVERPROPERTY('ProductVersion') AS ProductVersion,
+       SERVERPROPERTY('IsClustered') AS IsClustered,
+       SERVERPROPERTY('Collation') AS Collation;
+# 12. Job and SQL Agent Information
+## List all SQL Server Agent jobs
+sql
+SELECT job_id, name, enabled, description
+FROM msdb.dbo.sysjobs;
+## Check job history
+sql
+SELECT job_id, run_date, run_time, run_duration, message
+FROM msdb.dbo.sysjobhistory
+WHERE step_id = 0; -- 0 indicates job completion
+## Job schedule details
+sql
+SELECT j.name AS JobName, s.name AS ScheduleName, s.enabled, s.freq_type,
+       s.freq_interval, s.freq_subday_type, s.freq_subday_interval, s.next_run_date
+FROM msdb.dbo.sysjobs j
+JOIN msdb.dbo.sysjobschedules js ON j.job_id = js.job_id
+JOIN msdb.dbo.sysschedules s ON js.schedule_id = s.schedule_id;
+# 13. Data File and Log File Information
+## List all data and log files for each database
+sql
+SELECT DB_NAME(database_id) AS DatabaseName, name AS FileName, type_desc AS FileType,
+       physical_name AS FilePath, size, max_size, growth
+FROM sys.master_files;
+## Check database file sizes and usage
+sql
+USE [database_name];
+EXEC sp_spaceused;
+# 14. Performance Metrics
+## CPU usage by sessions
+sql
+SELECT session_id, login_name, status, cpu_time, memory_usage
+FROM sys.dm_exec_sessions
+WHERE is_user_process = 1
+ORDER BY cpu_time DESC;
+## Memory usage by database
+sql
+SELECT DB_NAME(database_id) AS DatabaseName, 
+       SUM(page_count) * 8 / 1024 AS MemoryUsed_MB
+FROM sys.dm_os_buffer_descriptors
+GROUP BY database_id
+ORDER BY MemoryUsed_MB DESC;
+## Disk I/O by database file
+sql
+SELECT DB_NAME(database_id) AS DatabaseName, file_id, 
+       io_stall_read_ms AS ReadLatency, io_stall_write_ms AS WriteLatency,
+       num_of_reads AS Reads, num_of_writes AS Writes
+FROM sys.dm_io_virtual_file_stats(NULL, NULL);
+# 15. Index Fragmentation
+## Check fragmentation of indexes in a database
+sql
+USE [database_name];
+SELECT OBJECT_NAME(i.object_id) AS TableName, i.name AS IndexName, 
+       index_type_desc, avg_fragmentation_in_percent
+FROM sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'DETAILED') AS d
+JOIN sys.indexes AS i ON d.object_id = i.object_id AND d.index_id = i.index_id
+WHERE avg_fragmentation_in_percent > 10
+ORDER BY avg_fragmentation_in_percent DESC;
+# 16. System Health and Error Logs
+## View SQL Server error log
+sql
+EXEC sp_readerrorlog 0, 1;
+## List most recent critical events from system health session
+sql
+SELECT top 10 event_data.value('(event/@name)[1]', 'varchar(50)') AS event_name,
+              event_data.value('(event/data[@name="error_number"]/value)[1]', 'int') AS error_number,
+              event_data.value('(event/data[@name="severity"]/value)[1]', 'int') AS severity,
+              event_data.value('(event/data[@name="message"]/value)[1]', 'varchar(max)') AS message,
+              event_data.value('(event/@timestamp)[1]', 'datetime') AS [Time]
+FROM (
+    SELECT CONVERT(xml, event_data) AS event_data
+    FROM sys.fn_xe_file_target_read_file('system_health*.xel', NULL, NULL, NULL)
+    ) AS tab
+ORDER BY [Time] DESC;
+# 17. Replication and Mirroring Information
+## Check replication status
+sql
+SELECT name AS ReplicationName, status, publisher, subscriber
+FROM msdb.dbo.MSreplication_monitordata;
+## Mirroring status of databases
+sql
+SELECT DB_NAME(database_id) AS DatabaseName, mirroring_state_desc, mirroring_partner_name, mirroring_role_desc
+FROM sys.database_mirroring;
+# 18. User Permissions and Roles
+## List all permissions for a specific user
+sql
+SELECT dp.name AS Principal, p.permission_name, p.state_desc, o.name AS ObjectName
+FROM sys.database_permissions p
+JOIN sys.database_principals dp ON p.grantee_principal_id = dp.principal_id
+LEFT JOIN sys.objects o ON p.major_id = o.object_id
+WHERE dp.name = 'your_username';
+## Role memberships for users
+sql
+SELECT dp1.name AS RoleName, dp2.name AS UserName
+FROM sys.database_role_members AS drm
+JOIN sys.database_principals AS dp1 ON dp1.principal_id = drm.role_principal_id
+JOIN sys.database_principals AS dp2 ON dp2.principal_id = drm.member_principal_id;
+# 19. Full-Text Index and Catalog Information
+## List full-text catalogs
+sql
+SELECT name AS FullTextCatalogName, path, is_default
+FROM sys.fulltext_catalogs;
+## List tables and columns with full-text indexes
+sql
+SELECT OBJECT_NAME(i.object_id) AS TableName, COL_NAME(i.object_id, c.column_id) AS ColumnName,
+       c.type_desc AS DataType, i.name AS FullTextIndexName
+FROM sys.fulltext_indexes i
+JOIN sys.fulltext_index_columns ic ON i.object_id = ic.object_id
+JOIN sys.columns c ON ic.column_id = c.column_id AND ic.object_id = c.object_id;
+# 20. Auditing and Security Events
+## Check audit settings and status
+sql
+SELECT name AS AuditName, status_desc, audit_file_path
+FROM sys.server_audits;
+## Check login audit information
+sql
+SELECT login_name, event_time, event_type, session_id, host_name, database_name
+FROM sys.fn_get_audit_file ('C:\AuditFolder\*', default, default);
